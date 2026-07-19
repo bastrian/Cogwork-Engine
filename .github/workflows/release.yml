@@ -72,11 +72,21 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == v0.* || "$GITHUB_REF_NAME" == *-* ]]; then
             prerelease=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            dist/cogwork-engine-*.zip \
-            dist/cogwork-engine-*.zip.sha256 \
-            --verify-tag \
-            --title "Cogwork Engine $GITHUB_REF_NAME" \
-            --generate-notes \
-            --notes "See the packaged CHANGELOG and project wiki for upgrade and deployment guidance." \
-            "${prerelease[@]}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/cogwork-engine-*.zip \
+              dist/cogwork-engine-*.zip.sha256 \
+              --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "Cogwork Engine $GITHUB_REF_NAME" \
+              "${prerelease[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/cogwork-engine-*.zip \
+              dist/cogwork-engine-*.zip.sha256 \
+              --verify-tag \
+              --title "Cogwork Engine $GITHUB_REF_NAME" \
+              --generate-notes \
+              --notes "See the packaged CHANGELOG and project wiki for upgrade and deployment guidance." \
+              "${prerelease[@]}"
+          fi
