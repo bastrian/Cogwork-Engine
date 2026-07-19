@@ -1,0 +1,58 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM php:8.3-apache
+
+        RUN apt-get update \
+            && apt-get install -y --no-install-recommends \
+                libcurl4-openssl-dev \
+                libonig-dev \
+                libsqlite3-dev \
+                libzip-dev \
+            && docker-php-ext-install -j$$(nproc) \
+                curl \
+                mbstring \
+                pdo_mysql \
+                pdo_sqlite \
+                zip \
+            && a2enmod rewrite \
+            && sed -ri 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf \
+            && printf 'ServerName localhost\n' > /etc/apache2/conf-available/servername.conf \
+            && a2enconf servername \
+            && rm -rf /var/lib/apt/lists/*
+
+        WORKDIR /var/www/html
+    ports:
+      - "${MODRIGHT_BIND:-127.0.0.1}:${MODRIGHT_PORT:-8080}:80"
+    volumes:
+      - .:/var/www/html:ro
+      - modright_data:/var/www/html/storage
+    command: >-
+      sh -c "chown -R www-data:www-data /var/www/html/storage
+      && exec apache2-foreground"
+    restart: unless-stopped
+
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM php:8.3-cli
+        RUN apt-get update \
+            && apt-get install -y --no-install-recommends git libcurl4-openssl-dev libonig-dev libsqlite3-dev libzip-dev unzip \
+            && docker-php-ext-install -j$$(nproc) curl mbstring pdo_sqlite zip \
+            && rm -rf /var/lib/apt/lists/*
+        COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+        WORKDIR /app
+    volumes:
+      - .:/app
+      - composer_vendor:/app/vendor
+      - test_temp:/tmp
+    command: sh -c "composer install --no-interaction --prefer-dist && composer test"
+
+volumes:
+  modright_data:
+  composer_vendor:
+  test_temp:

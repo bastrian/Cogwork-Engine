@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="app/bootstrap.php" colors="true" cacheDirectory="storage/test-cache">
+  <testsuites><testsuite name="Cogwork Engine"><directory>tests</directory></testsuite></testsuites>
+</phpunit>

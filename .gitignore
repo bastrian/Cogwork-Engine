@@ -1,0 +1,28 @@
+# Runtime configuration and user data
+/storage/*
+!/storage/.gitignore
+!/storage/.htaccess
+/config/*.php
+!/config/.htaccess
+
+# Development dependencies and test output
+/vendor/
+/.phpunit.cache/
+/.phpunit.result.cache
+/coverage/
+
+# Local environment and editor files
+/.env
+/.env.*
+!/.env.example
+/.idea/
+/.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Secrets and private keys
+*.key
+*.pem
+repo_stuff.txt

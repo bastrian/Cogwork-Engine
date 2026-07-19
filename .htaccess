@@ -1,0 +1,13 @@
+Options -Indexes
+RewriteEngine On
+
+RewriteRule ^(?:\.git|\.github|app|config|lang|storage|tests|vendor)(?:/|$) - [F,L,NC]
+RewriteRule ^(?:composer\.(?:json|lock)|phpunit\.xml|compose\.ya?ml|.*\.md|LICENSE(?:\..*)?|SECURITY\.txt)$ - [F,L,NC]
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>
