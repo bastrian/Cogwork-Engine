@@ -201,6 +201,7 @@ test('install, sign in, navigate account/admin/help, and sign out', async ({ pag
   await page.getByLabel('Username').fill('browseradmin');
   await page.getByLabel('Password').fill('browser-test-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Modpacks' })).toBeVisible();
   await page.goto('/index.php?route=admin&tab=system&view=maintenance');
   await expect(page.getByRole('status', { name: 'Information announcement' }).getByText('Browser announcement')).toBeVisible();
   const maintenance = page.locator('.system-settings > details', { hasText: 'Maintenance mode' });
@@ -229,6 +230,7 @@ test('install, sign in, navigate account/admin/help, and sign out', async ({ pag
   await page.getByLabel('Username').fill('browseradmin');
   await page.getByLabel('Password').fill('browser-test-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Modpacks' })).toBeVisible();
   await page.goto('/index.php?route=admin&tab=system&view=maintenance');
   await maintenance.locator('summary').click();
   await maintenance.getByLabel('Enable maintenance').uncheck();
