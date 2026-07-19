@@ -34,6 +34,14 @@ final class PackValidator
             $client=$file['env']['client']??null;$server=$file['env']['server']??null;
             if($client===null||$server===null)$add('warning',$label,'Client/server compatibility is incomplete; missing values default to required.');
             if($client==='unsupported'&&$server!=='unsupported')$passed++;
+
+            $metadata=is_array($file['cogwork']??null)?$file['cogwork']:[];
+            $targetMinecraft=(string)($dependencies['minecraft']??'');
+            $targetLoader=isset($loaderName)?$loaderName:'';
+            $fileGames=array_map('strval',is_array($metadata['game_versions']??null)?$metadata['game_versions']:[]);
+            $fileLoaders=array_map('strval',is_array($metadata['loaders']??null)?$metadata['loaders']:[]);
+            if($fileGames!==[]&&$targetMinecraft!==''&&!in_array($targetMinecraft,$fileGames,true))$add('error',$label,'The selected Modrinth version does not support Minecraft '.$targetMinecraft.'.');
+            if($fileLoaders!==[]&&$targetLoader!==''&&!in_array($targetLoader,$fileLoaders,true))$add('error',$label,'The selected Modrinth version does not support the '.$targetLoader.' loader.');
             if($server==='unsupported'&&$client!=='unsupported')$passed++;
 
             if($path!==''){$local=$packRoot.'/'.$path;if(!is_file($local))$add('warning',$label,'The file has not been synchronized locally.');else{
@@ -42,6 +50,14 @@ final class PackValidator
             }}
         }
         if($files===[])$add('warning','Pack contents','The pack does not contain any mod files yet.');
+        foreach(($index['cogwork']['unresolved_dependencies']??[])as$dependency){
+            if(!is_array($dependency))continue;
+            $title=(string)($dependency['title']??$dependency['project_id']??'Unknown dependency');
+            $message=!empty($dependency['acknowledged'])
+                ?$title.' is a required external/manual dependency and has been acknowledged.'
+                :$title.' is required, but no compatible Modrinth release is available. Add a local JAR that satisfies it or acknowledge the manual dependency.';
+            $add('warning','Required dependency',$message);
+        }
         $layers=[];foreach(['overrides','server-overrides','client-overrides']as$layer){$directory=$packRoot.'/'.$layer;if(!is_dir($directory))continue;$iterator=new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory,\FilesystemIterator::SKIP_DOTS));foreach($iterator as$item){if(!$item->isFile()||$item->isLink())continue;$relative=str_replace('\\','/',substr($item->getPathname(),strlen($directory)+1));if(isset($layers[$relative])&&$layers[$relative]!==$layer)$add('warning','Override conflict: '.$relative,'The file exists in both '.$layers[$relative].' and '.$layer.'; the environment-specific layer wins.');$layers[$relative]=$layer;}}
         if($layers!==[])$passed++;
         return['errors'=>count(array_filter($issues,fn($i)=>$i['severity']==='error')),'warnings'=>count(array_filter($issues,fn($i)=>$i['severity']==='warning')),'passed'=>$passed,'issues'=>$issues];
