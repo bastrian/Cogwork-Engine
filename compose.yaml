@@ -34,6 +34,23 @@ services:
       && exec apache2-foreground"
     restart: unless-stopped
 
+  proxy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    depends_on:
+      - web
+    environment:
+      COGWORK_DOMAIN: "${COGWORK_DOMAIN:-localhost}"
+    ports:
+      - "${COGWORK_HTTPS_BIND:-0.0.0.0}:80:80"
+      - "${COGWORK_HTTPS_BIND:-0.0.0.0}:443:443"
+      - "${COGWORK_HTTPS_BIND:-0.0.0.0}:443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
   test:
     profiles: ["test"]
     build:
@@ -56,3 +73,5 @@ volumes:
   modright_data:
   composer_vendor:
   test_temp:
+  caddy_data:
+  caddy_config:

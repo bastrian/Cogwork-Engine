@@ -22,6 +22,18 @@ MODRIGHT_BIND=127.0.0.1 MODRIGHT_PORT=8080 docker compose up -d web
 docker compose --profile test run --rm test
 ```
 
+Optional Caddy HTTPS proxy:
+
+```bash
+COGWORK_DOMAIN=modpacks.example.com \
+MODRIGHT_BIND=127.0.0.1 MODRIGHT_PORT=8095 \
+docker compose --profile proxy up -d proxy
+```
+
+The domain must resolve to the server and inbound TCP ports 80 and 443 must be
+available. Caddy obtains and renews the certificate automatically. Keep the
+diagnostic application port bound to loopback so visitors cannot bypass HTTPS.
+
 ## Routine operation
 
 - Refresh the offline catalog after importing a pack and periodically thereafter. Failed projects keep their previous cached metadata.
