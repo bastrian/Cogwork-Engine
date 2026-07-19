@@ -1,4 +1,10 @@
-# Restricted-Hosting PHP Rebuild Plan
+# Cogwork Engine development archive — restricted-hosting PHP rebuild
+
+This plan records the architecture and delivery criteria used for the completed
+PHP rebuild and Phases 1–10. It is retained for historical context and is not
+the active roadmap. Current work is tracked exclusively under Phases 11–13 in
+[TODO.md](TODO.md), with verification evidence in
+[PHASES_11_13_VERIFICATION.md](PHASES_11_13_VERIFICATION.md).
 
 ## Goal and constraints
 

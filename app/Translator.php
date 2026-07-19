@@ -41,7 +41,12 @@ final class Translator
 
     /** Translate exact static text nodes and selected attributes in server-rendered markup. */
     public function html(string $html): string
-    { if($this->locale===self::DEFAULT_LOCALE)return$html;$translated=preg_replace_callback('/(?<=>)([^<>]+)(?=<)/u',function(array$m):string{preg_match('/^(\s*)(.*?)(\s*)$/us',$m[1],$parts);$text=$parts[2]??'';return($parts[1]??'').($text!==''?$this->text($text):'').($parts[3]??'');},$html)??$html;return preg_replace_callback('/\b(placeholder|aria-label|title|data-confirm)="([^"]+)"/u',fn(array$m):string=>$m[1].'="'.Security::escape($this->text(html_entity_decode($m[2],ENT_QUOTES|ENT_HTML5,'UTF-8'))).'"',$translated)??$translated; }
+    {
+        $translated=$html;
+        if($this->locale!==self::DEFAULT_LOCALE)$translated=preg_replace_callback('/(?<=>)([^<>]+)(?=<)/u',function(array$m):string{preg_match('/^(\s*)(.*?)(\s*)$/us',$m[1],$parts);$text=$parts[2]??'';return($parts[1]??'').($text!==''?$this->text($text):'').($parts[3]??'');},$html)??$html;
+        $translated=preg_replace_callback('/<aside class="announcement (info|success|warning|maintenance|critical)"([^>]*)>/u',fn(array$m):string=>'<aside class="announcement '.$m[1].'"'.$m[2].' aria-label="'.Security::escape($this->text(ucfirst($m[1]).' announcement')).'">',$translated)??$translated;
+        return preg_replace_callback('/\b(placeholder|aria-label|title|data-confirm)="([^"]+)"/u',fn(array$m):string=>$m[1].'="'.Security::escape($this->text(html_entity_decode($m[2],ENT_QUOTES|ENT_HTML5,'UTF-8'))).'"',$translated)??$translated;
+    }
 
     /** @return array<string,mixed> */
     public function all(): array { return$this->messages; }

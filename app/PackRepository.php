@@ -44,6 +44,7 @@ final class PackRepository
         Storage::ensurePack($id);
         Storage::writeIndex($id, $index);
         $this->audit('pack.created', ['pack_id' => $id, 'name' => $name]);
+        (new PackActivityService($this->db))->record($id,'pack.created','success','Pack created',['version'=>(string)$index['versionId']]);
         return $id;
     }
 
@@ -51,11 +52,13 @@ final class PackRepository
     public function updateIndex(string $id, array $index): void
     {
         self::validateIndex($index);
+        $previous=$this->find($id);$oldFiles=$previous['index']['files']??[];$newFiles=$index['files']??[];$modsChanged=self::encode($oldFiles)!==self::encode($newFiles);$metadataChanged=$previous['name']!==$index['name']||$previous['version_id']!==$index['versionId']||$previous['summary']!==($index['summary']??'')||$previous['game_version']!==$index['dependencies']['minecraft'];
         [$loader, $loaderVersion] = self::loader($index['dependencies']);
         $stmt = $this->db->prepare('UPDATE packs SET name=?,version_id=?,summary=?,game_version=?,loader=?,loader_version=?,index_json=?,updated_at=? WHERE id=?');
         $stmt->execute([$index['name'], $index['versionId'], $index['summary'] ?? '', $index['dependencies']['minecraft'], $loader, $loaderVersion, self::encode($index), Database::now(), $id]);
         Storage::writeIndex($id, $index);
         $this->audit('pack.updated', ['pack_id' => $id, 'version' => $index['versionId']]);
+        $activity=new PackActivityService($this->db);if($modsChanged)$activity->record($id,'mods.changed','success','Pack mod list changed',['previous_count'=>count($oldFiles),'current_count'=>count($newFiles)]);if($metadataChanged||!$modsChanged)$activity->record($id,'pack.updated','success','Pack metadata updated',['version'=>(string)$index['versionId']]);
     }
 
     public function delete(string $id): void

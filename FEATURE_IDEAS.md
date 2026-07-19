@@ -1,6 +1,8 @@
-# Cogwork Engine feature ideas
+# Cogwork Engine development archive — original feature ideas
 
-These ideas were identified while planning work that remains useful when Modrinth is unavailable.
+This document preserves the original product ideas that informed completed
+Phases 1–10. It is an archive, not the active roadmap; current work is tracked
+under Phases 11–13 in [TODO.md](TODO.md).
 
 1. **Pack validation report** — Detect missing or duplicate files, invalid hashes and URLs, incorrect client/server inclusion, missing loader dependencies, incompatible game/loader selections, and unsafe pack paths before building.
 2. **Better mod management** — Search cached mods, show project metadata, filter by environment, detect duplicate projects, and add multiple mods at once.
@@ -14,4 +16,6 @@ These ideas were identified while planning work that remains useful when Modrint
 10. **Backup and migration** — Export the database, pack definitions, overrides, and cached metadata, with secrets excluded by default.
 11. **Minecraft and loader migration workbench** — Compare newer Minecraft and loader combinations, identify direct upgrades and cross-loader replacements, rank safe targets, and create a separately validated migrated pack without modifying the source.
 
-Implementation starts with the pack validation report because it supports safer imports and builds and does not require a live external service.
+Implementation began with the pack validation report because it supported safer
+imports and builds without requiring a live external service. These ideas have
+since been incorporated into the completed implementation archive.

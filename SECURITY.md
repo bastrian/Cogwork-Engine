@@ -21,3 +21,13 @@ Cogwork Engine must be served over HTTPS. Confirm that `app/`, `config/`,
 files cannot be downloaded through the web server. Keep PHP and the host
 operating system supported and patched, use strong unique passwords, and keep
 independent backups of application data and Minecraft worlds.
+
+Forwarded HTTPS headers are trusted only from administrator-configured proxy IPs
+or CIDR networks. Configure the canonical HTTPS origin before enabling recovery,
+2FA, passkeys, or reCAPTCHA. Keep SMTP, proxy, CAPTCHA, application, cron,
+session, reset, and factor secrets out of issue reports and diagnostic uploads.
+
+Login and recovery endpoints use persistent account, network, and installation
+throttling. CAPTCHA supplements these controls; it does not replace passwords,
+2FA, or rate limiting. Permanent user deletion removes identity and factor data
+while retained operational history uses the neutral “Deleted User” identity.

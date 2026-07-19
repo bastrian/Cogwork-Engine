@@ -16,11 +16,14 @@ final class JobService
         private readonly ModrinthClient $api = new ModrinthClient(),
         private readonly ArchiveService $archives = new ArchiveService(),
         ?OfflineCatalog $catalog = null,
+        private readonly ?SystemSettings $settings = null,
     ) { $this->catalog=$catalog??new OfflineCatalog($db);$this->migrations=new MigrationService($db,$packs); }
 
     /** @param array<string, mixed> $payload */
     public function create(string $type, ?string $packId, array $payload = []): string
     {
+        if(!$this->jobsAllowed(true))throw new HttpException(503,'New background jobs are paused during maintenance.');
+        if($this->externalJob($type)&&!($this->settings??new SystemSettings($this->db))->feature('modrinth'))throw new HttpException(503,'This background job requires Modrinth connectivity, which is disabled.');
         if ($packId !== null) {
             $this->packs->find($packId);
             $stmt = $this->db->prepare("SELECT COUNT(*) FROM jobs WHERE pack_id=? AND status IN ('queued','running')");
@@ -34,6 +37,7 @@ final class JobService
         $actor=(string)($_SESSION['user_id']??$_SESSION['admin_id']??'');if($actor!=='')$this->db->prepare('INSERT INTO job_actors (job_id,user_id) VALUES (?,?)')->execute([$id,$actor]);
         $audit=$this->db->prepare('INSERT INTO audit_log (id,action,context,created_at) VALUES (?,?,?,?)');
         $audit->execute([Database::id(),'job.created',json_encode(['job_id'=>$id,'pack_id'=>$packId,'type'=>$type,'actor_user_id'=>$_SESSION['user_id']??$_SESSION['admin_id']??null],JSON_THROW_ON_ERROR),$now]);
+        if($packId!==null)(new PackActivityService($this->db))->record($packId,'job.'.$type,'info',ucwords(str_replace('_',' ',$type)).' job started',['job_id'=>$id]);
         return $id;
     }
 
@@ -51,6 +55,8 @@ final class JobService
     /** @return array<string, mixed> */
     public function step(string $id): array
     {
+        if(!$this->jobsAllowed(false))return$this->find($id);
+        $pending=$this->find($id);if($this->externalJob((string)$pending['type'])&&!($this->settings??new SystemSettings($this->db))->feature('modrinth'))return$pending;
         $token = bin2hex(random_bytes(16));
         $stale = gmdate('c', time() - 300);
         $stmt = $this->db->prepare("UPDATE jobs SET lock_token=?,status='running',updated_at=? WHERE id=? AND status IN ('queued','running') AND (lock_token IS NULL OR updated_at < ?)");
@@ -64,6 +70,8 @@ final class JobService
         } catch (\Throwable $e) {
             $stmt = $this->db->prepare("UPDATE jobs SET status='failed',error=?,lock_token=NULL,updated_at=? WHERE id=? AND lock_token=?");
             $stmt->execute([mb_substr($e->getMessage(), 0, 2000), Database::now(), $id, $token]);
+            if(isset($job['pack_id'])&&$job['pack_id'])(new PackActivityService($this->db))->record((string)$job['pack_id'],'job.'.(string)$job['type'],'failure','Job failed',['job_id'=>$id]);
+            if(isset($job))$this->notifyOutcome($job,'failed');
         }
         $stmt = $this->db->prepare('UPDATE jobs SET lock_token=NULL WHERE id=? AND lock_token=?'); $stmt->execute([$id, $token]);
         return $this->find($id);
@@ -76,11 +84,20 @@ final class JobService
         return $job ? $this->step($job['id']) : null;
     }
 
+    private function jobsAllowed(bool$new):bool
+    { $state=(new MaintenanceService($this->settings??new SystemSettings($this->db)))->state();$key=$new?'pause_new_jobs':'pause_running_jobs';return!($state['active']&&!empty($state[$key])); }
+    private function externalJob(string$type):bool
+    { return in_array($type,['import','update_check','apply_updates','sync_files','catalog_sync','migration_scan'],true); }
+
     public function cancel(string $id): void
-    { $this->find($id);$stmt=$this->db->prepare("UPDATE jobs SET status='cancelled',error='Cancelled by user.',lock_token=NULL,updated_at=? WHERE id=? AND status IN ('queued','running')");$stmt->execute([Database::now(),$id]);if($stmt->rowCount()!==1)throw new HttpException(409,'This job can no longer be cancelled.'); }
+    { $job=$this->find($id);$stmt=$this->db->prepare("UPDATE jobs SET status='cancelled',error='Cancelled by user.',lock_token=NULL,updated_at=? WHERE id=? AND status IN ('queued','running')");$stmt->execute([Database::now(),$id]);if($stmt->rowCount()!==1)throw new HttpException(409,'This job can no longer be cancelled.');if($job['pack_id'])(new PackActivityService($this->db))->record((string)$job['pack_id'],'job.'.(string)$job['type'],'cancelled','Job cancelled',['job_id'=>$id]);$this->notifyOutcome($job,'cancelled'); }
 
     public function retry(string $id): string
     { $job=$this->find($id);if(!in_array($job['status'],['failed','cancelled'],true))throw new HttpException(409,'Only failed or cancelled jobs can be retried.');return$this->create($job['type'],$job['pack_id']?:null,$job['payload_data']); }
+
+    /** @param array<string,mixed> $job */
+    private function runRetentionCleanup(array$job):void
+    { $service=new RetentionService($this->db,$this->settings??new SystemSettings($this->db));$batch=$service->cleanup(100);$result=$job['result_data'];$result['counts']??=[];foreach($batch as$key=>$count)$result['counts'][$key]=(int)($result['counts'][$key]??0)+(int)$count;$processed=array_sum($result['counts']);$total=max($processed,(int)($job['payload_data']['estimated_records']??0));if(array_sum($batch)===0){$this->complete($job['id'],$result);return;}$this->progress($job['id'],$processed,$total,$result); }
 
     /** @param array<string, mixed> $job */
     private function runUpdateCheck(array $job): void
@@ -256,6 +273,7 @@ final class JobService
         $index=json_decode((string)file_get_contents($backup['path']),true,512,JSON_THROW_ON_ERROR);
         $this->backup($backup['pack_id']);
         $this->packs->updateIndex($backup['pack_id'],$index);
+        (new PackActivityService($this->db))->record((string)$backup['pack_id'],'backup.restored','success','Pack restored from backup',['backup_id'=>$backupId]);
         return $backup['pack_id'];
     }
 
@@ -264,7 +282,7 @@ final class JobService
     { $stmt=$this->db->prepare('UPDATE jobs SET progress_current=?,progress_total=?,result=?,updated_at=? WHERE id=?'); $stmt->execute([$current,$total,json_encode($result,JSON_THROW_ON_ERROR),Database::now(),$id]); }
     /** @param array<string, mixed> $result */
     private function complete(string $id, array $result): void
-    { $stmt=$this->db->prepare("UPDATE jobs SET status='completed',result=?,progress_current=progress_total,updated_at=? WHERE id=?"); $stmt->execute([json_encode($result,JSON_THROW_ON_ERROR),Database::now(),$id]); }
+    { $job=$this->find($id);$stmt=$this->db->prepare("UPDATE jobs SET status='completed',result=?,progress_current=progress_total,updated_at=? WHERE id=?"); $stmt->execute([json_encode($result,JSON_THROW_ON_ERROR),Database::now(),$id]);if($job['pack_id']){$context=['job_id'=>$id];foreach(['manifest_id','scan_id','backup_id']as$key)if(isset($result[$key])&&is_scalar($result[$key]))$context[$key]=$result[$key];if(isset($result['package_ids'][0]))$context['package_id']=$result['package_ids'][0];(new PackActivityService($this->db))->record((string)$job['pack_id'],'job.'.(string)$job['type'],'success','Job completed',$context);}$this->notifyOutcome($job,'completed'); }
     /** @param array<string, mixed> $payload */
     private function savePayload(string $id, array $payload): void
     { $stmt=$this->db->prepare('UPDATE jobs SET payload=?,updated_at=? WHERE id=?'); $stmt->execute([json_encode($payload,JSON_THROW_ON_ERROR),Database::now(),$id]); }
@@ -274,4 +292,7 @@ final class JobService
     { foreach ($files as $file) if (!empty($file['primary'])) return $file; return $files[0] ?? null; }
     private static function projectId(string $url): ?string
     { $parts=parse_url($url); if (($parts['host']??'')!=='cdn.modrinth.com') return null; $segments=explode('/',trim($parts['path']??'','/')); return ($segments[0]??'')==='data' ? ($segments[1]??null) : null; }
+    /** @param array<string,mixed> $job */
+    private function notifyOutcome(array$job,string$status):void
+    { $category=match((string)$job['type']){'build'=>'builds','migration_scan'=>'migrations',default=>'jobs'};$severity=$status==='completed'?'success':($status==='cancelled'?'info':'warning');$label=ucwords(str_replace('_',' ',(string)$job['type']));$title=$label.' '.($status==='completed'?'completed':$status);$target=Application::url('jobs/view',['id'=>$job['id']]);$recipients=[];$actor=$this->db->prepare('SELECT user_id FROM job_actors WHERE job_id=?');$actor->execute([$job['id']]);if($id=$actor->fetchColumn())$recipients[]=(string)$id;if(!empty($job['pack_id'])){$owner=$this->db->prepare('SELECT user_id FROM pack_owners WHERE pack_id=?');$owner->execute([$job['pack_id']]);if($id=$owner->fetchColumn())$recipients[]=(string)$id;}foreach(array_unique($recipients)as$userId)(new NotificationService($this->db))->send($userId,$category,$severity,$title,'The background operation is '.$status.'.',$target);}
 }

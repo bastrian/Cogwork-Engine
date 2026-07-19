@@ -7,12 +7,13 @@ namespace Modright;
 final class ModrinthClient
 {
     private const API = 'https://api.modrinth.com/v2';
-    private const HOSTS = [
-        'api.modrinth.com', 'cdn.modrinth.com',
+    public const ALLOWED_HOSTS = [
+        'api.modrinth.com', 'cdn.modrinth.com', 'status.modrinth.com',
         'github.com', 'raw.githubusercontent.com',
         'objects.githubusercontent.com', 'release-assets.githubusercontent.com',
         'gitlab.com',
     ];
+    public function __construct(private readonly ?SystemSettings $settings=null,private readonly ?SecretStore $secrets=null) {}
 
     /** @return array<string, mixed> */
     public function version(string $id): array
@@ -38,6 +39,17 @@ final class ModrinthClient
     /** @return list<array<string,mixed>> */
     public function searchProjects(string $query,string $gameVersion,string $loader,int $limit=20): array
     { $facets=[['project_type:mod'],['versions:'.$gameVersion],['categories:'.$loader]];$url=self::API.'/search?'.http_build_query(['query'=>$query,'facets'=>json_encode($facets),'limit'=>max(1,min(50,$limit))]);$result=$this->json($url);return is_array($result['hits']??null)?$result['hits']:[]; }
+
+    /** @return list<array<string,mixed>> */
+    public function gameVersions(): array
+    { $result=$this->json(self::API.'/tag/game_version');return array_is_list($result)?$result:[]; }
+
+    public function statusPage(): string
+    { return $this->request('https://status.modrinth.com/',2*1024*1024,4); }
+
+    /** @return array{status:string,stage:string,message:string,checked_at:string} */
+    public function diagnose():array
+    { $started=microtime(true);try{$project=$this->project('fabric-api');if(($project['id']??'')==='')throw new \RuntimeException('The API response did not contain the expected project identifier.');return['status'=>'healthy','stage'=>'api','message'=>'DNS, proxy connection, TLS, HTTP, and Modrinth API checks succeeded in '.(int)((microtime(true)-$started)*1000).' ms.','checked_at'=>Database::now()];}catch(\Throwable$e){$message=$e->getMessage();$stage=match(true){str_contains($message,'disabled')=>'disabled',str_contains(strtolower($message),'proxy')=>'proxy',str_contains(strtolower($message),'resolve')=>'dns',str_contains(strtolower($message),'ssl')||str_contains(strtolower($message),'certificate')=>'tls',str_contains($message,'HTTP')=>'http',default=>'connection'};return['status'=>$stage==='disabled'?'disabled':'degraded','stage'=>$stage,'message'=>'Connection test failed at '.strtoupper($stage).'. Review connectivity settings and server logs; credentials and remote response content are not shown.','checked_at'=>Database::now()];} }
 
     /** @return array<string, mixed> */
     private function json(string $url): array
@@ -101,16 +113,24 @@ final class ModrinthClient
     public static function assertUrl(string $url): void
     {
         $parts = parse_url($url);
-        if (($parts['scheme'] ?? '') !== 'https' || !in_array(strtolower($parts['host'] ?? ''), self::HOSTS, true) || isset($parts['user']) || isset($parts['pass'])) {
+        if (($parts['scheme'] ?? '') !== 'https' || !in_array(strtolower($parts['host'] ?? ''), self::ALLOWED_HOSTS, true) || isset($parts['user']) || isset($parts['pass'])) {
             throw new \InvalidArgumentException('Only approved HTTPS download hosts are allowed.');
         }
     }
 
-    private function request(string $url, int $limit): string
+    /** @param mixed $values @return list<string> */
+    public static function normalizeProxyBypass(mixed $values): array
+    {
+        if(!is_array($values))return[];
+        $normalized=array_map(static fn(mixed$value):string=>strtolower(trim((string)$value)),$values);
+        return array_values(array_unique(array_intersect($normalized,self::ALLOWED_HOSTS)));
+    }
+
+    private function request(string $url, int $limit,int$totalTimeout=60): string
     {
         self::assertUrl($url);
         for ($attempt = 0; $attempt < 3; $attempt++) {
-            $headers=[];$ch=$this->handle($url);
+            $headers=[];$ch=$this->handle($url,$totalTimeout);
             curl_setopt($ch,CURLOPT_FAILONERROR,false);curl_setopt($ch,CURLOPT_RETURNTRANSFER,true);curl_setopt($ch,CURLOPT_MAXFILESIZE,$limit);
             curl_setopt($ch,CURLOPT_HEADERFUNCTION,static function($handle,string$line)use(&$headers):int{$parts=explode(':',$line,2);if(count($parts)===2)$headers[strtolower(trim($parts[0]))]=trim($parts[1]);return strlen($line);});
             $body=curl_exec($ch);$status=(int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE);$error=curl_error($ch);curl_close($ch);
@@ -123,10 +143,12 @@ final class ModrinthClient
         throw new \RuntimeException('Modrinth request failed.');
     }
 
-    private function handle(string $url): \CurlHandle
+    private function handle(string $url,int$totalTimeout=60): \CurlHandle
     {
+        if($this->settings!==null&&!$this->settings->feature('modrinth'))throw new \RuntimeException('Modrinth connectivity is disabled by the administrator.');
         $ch = curl_init($url);
-        curl_setopt_array($ch, [CURLOPT_CONNECTTIMEOUT => 10, CURLOPT_TIMEOUT => 60, CURLOPT_FOLLOWLOCATION => false, CURLOPT_USERAGENT => 'Cogwork-Engine/1.0 (shared-hosting modpack manager)', CURLOPT_FAILONERROR => true, CURLOPT_PROTOCOLS => CURLPROTO_HTTPS]);
+        $connection=$this->settings?->group('connectivity')??[];$connectTimeout=min($totalTimeout,max(2,min(30,(int)($connection['connect_timeout']??10))));curl_setopt_array($ch, [CURLOPT_CONNECTTIMEOUT => $connectTimeout, CURLOPT_TIMEOUT => max(2,$totalTimeout), CURLOPT_FOLLOWLOCATION => false, CURLOPT_USERAGENT => 'Cogwork-Engine/1.0 (shared-hosting modpack manager)', CURLOPT_FAILONERROR => true, CURLOPT_PROTOCOLS => CURLPROTO_HTTPS]);
+        if(!empty($connection['proxy_enabled'])){$host=trim((string)($connection['proxy_host']??''));$port=(int)($connection['proxy_port']??0);if(!preg_match('/^[A-Za-z0-9.-]+$/',$host)||$port<1||$port>65535)throw new \RuntimeException('Outbound proxy configuration is invalid.');$type=match((string)($connection['proxy_type']??'http')){'socks5'=>CURLPROXY_SOCKS5_HOSTNAME,'https'=>defined('CURLPROXY_HTTPS')?CURLPROXY_HTTPS:CURLPROXY_HTTP,default=>CURLPROXY_HTTP};curl_setopt($ch,CURLOPT_PROXY,$host);curl_setopt($ch,CURLOPT_PROXYPORT,$port);curl_setopt($ch,CURLOPT_PROXYTYPE,$type);$bypass=self::normalizeProxyBypass($connection['bypass']??[]);if($bypass)curl_setopt($ch,CURLOPT_NOPROXY,implode(',',$bypass));$username=(string)($connection['proxy_username']??'');$password=$this->secrets?->get('proxy.password')??'';if($username!==''||$password!=='')curl_setopt($ch,CURLOPT_PROXYUSERPWD,$username.':'.$password);}
         return $ch;
     }
 }

@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 define('MODRIGHT_ROOT', dirname(__DIR__));
 
+if (is_file(MODRIGHT_ROOT . '/vendor/autoload.php')) {
+    require_once MODRIGHT_ROOT . '/vendor/autoload.php';
+}
+
 spl_autoload_register(static function (string $class): void {
     $prefix = 'Modright\\';
     if (!str_starts_with($class, $prefix)) {
@@ -21,8 +25,9 @@ if (PHP_VERSION_ID < 80300) {
 }
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
-    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || strtolower(trim(explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0])) === 'https';
+    $trustedProxies=array_values(array_filter(array_map('trim',explode(',',(string)getenv('COGWORK_TRUSTED_PROXIES')))));
+    if(\Modright\Config::installed()){try{$configured=(new \Modright\SystemSettings(\Modright\Database::connect()))->group('security')['trusted_proxies'];if(is_array($configured))$trustedProxies=array_values(array_unique(array_merge($trustedProxies,$configured)));}catch(\Throwable){}}
+    $https = \Modright\RequestSecurity::https($_SERVER,is_array($trustedProxies)?$trustedProxies:[]);
     session_name('modright_session');
     session_set_cookie_params([
         'httponly' => true,

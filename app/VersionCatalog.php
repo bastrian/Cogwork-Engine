@@ -10,6 +10,17 @@ final class VersionCatalog
     private const MINECRAFT_FALLBACK = ['1.21.8','1.21.7','1.21.6','1.21.5','1.21.4','1.21.3','1.21.2','1.21.1','1.21','1.20.6','1.20.5','1.20.4','1.20.3','1.20.2','1.20.1','1.20','1.19.4','1.19.3','1.19.2','1.19.1','1.19','1.18.2','1.18.1','1.18','1.17.1','1.17','1.16.5'];
     private ?string $notice = null;
 
+    private ?ModrinthClient $modrinth;
+
+    public function __construct(?ModrinthClient $modrinth=null)
+    {
+        $this->modrinth=$modrinth;
+        if($this->modrinth===null&&Config::installed()){
+            $settings=new SystemSettings(Database::connect());
+            $this->modrinth=new ModrinthClient($settings,new SecretStore());
+        }
+    }
+
     public function notice(): ?string
     {
         return $this->notice;
@@ -19,7 +30,7 @@ final class VersionCatalog
     public function minecraft(): array
     {
         return $this->cached('minecraft', function (): array {
-            $items = $this->json('https://api.modrinth.com/v2/tag/game_version', 1024 * 1024);
+            $items = ($this->modrinth??new ModrinthClient())->gameVersions();
             $versions = [];
             foreach ($items as $item) {
                 if (($item['version_type'] ?? '') === 'release' && !empty($item['version'])) $versions[] = (string) $item['version'];

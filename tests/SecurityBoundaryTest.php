@@ -16,6 +16,7 @@ final class SecurityBoundaryTest extends TestCase
     {
         ModrinthClient::assertUrl('https://cdn.modrinth.com/data/abc/versions/def/mod.jar');
         ModrinthClient::assertUrl('https://api.modrinth.com/v2/version/abc');
+        ModrinthClient::assertUrl('https://status.modrinth.com/');
         ModrinthClient::assertUrl('https://github.com/example/project/releases/download/1/mod.jar');
         ModrinthClient::assertUrl('https://raw.githubusercontent.com/example/project/main/mod.jar');
         ModrinthClient::assertUrl('https://gitlab.com/example/project/-/raw/main/mod.jar');
@@ -25,6 +26,15 @@ final class SecurityBoundaryTest extends TestCase
     public function testRelativeRedirectIsResolved(): void
     {
         self::assertSame('https://github.com/releases/file.jar', ModrinthClient::redirectUrl('https://github.com/project/download', '/releases/file.jar'));
+    }
+
+    public function testProxyBypassIsRestrictedToApprovedExactHosts(): void
+    {
+        self::assertSame(
+            ['api.modrinth.com','cdn.modrinth.com'],
+            ModrinthClient::normalizeProxyBypass([' API.MODRINTH.COM ','evil.test','cdn.modrinth.com','api.modrinth.com'])
+        );
+        self::assertSame([],ModrinthClient::normalizeProxyBypass('api.modrinth.com'));
     }
 
     #[DataProvider('unsafeUrls')]

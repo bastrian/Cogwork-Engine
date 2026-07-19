@@ -59,8 +59,10 @@ docker compose --profile test run --rm test
 ```
 
 The test suite uses temporary data and does not require the live Modrinth API.
-Operational details are also retained in [OPERATIONS.md](OPERATIONS.md), and
-planned work is tracked in [TODO.md](TODO.md).
+Operational details are also retained in [OPERATIONS.md](OPERATIONS.md). The
+completed Phases 11–13 roadmap is retained in [TODO.md](TODO.md);
+[PLAN.md](PLAN.md) and [FEATURE_IDEAS.md](FEATURE_IDEAS.md) are development
+archives.
 
 ## Security
 

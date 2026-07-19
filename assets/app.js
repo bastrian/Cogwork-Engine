@@ -1,5 +1,10 @@
 (() => {
   const i18n = window.ModrightI18n || {};
+  const jsonResponse = async response => {
+    const text = await response.text();
+    try { return JSON.parse(text); }
+    catch { throw new Error(response.ok ? 'The server returned an invalid response.' : `The request failed (${response.status}). Please reload the page and try again.`); }
+  };
   const databaseForm = document.querySelector('[data-database-form]');
   if (databaseForm) {
     const driver = databaseForm.querySelector('[data-database-driver]');
@@ -34,6 +39,34 @@
         statusBadge.title = i18n.status_failed || 'Could not reach the status service';
       });
   }
+
+  document.querySelectorAll('[data-feature-search]').forEach(featureSearch => featureSearch.addEventListener('input', () => {
+    const query = featureSearch.value.trim().toLowerCase();
+    const scope = featureSearch.closest('details') || document;
+    scope.querySelectorAll('[data-feature-reference]').forEach(item => { item.hidden = query !== '' && !item.dataset.search.includes(query); });
+  }));
+
+  const accountMenu = document.querySelector('[data-account-menu]');
+  if (accountMenu) {
+    document.addEventListener('click', event => { if (!accountMenu.contains(event.target)) accountMenu.open = false; });
+    accountMenu.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { accountMenu.open = false; accountMenu.querySelector('summary').focus(); }
+      if (!['ArrowDown', 'ArrowUp'].includes(event.key) || !accountMenu.open) return;
+      event.preventDefault(); const items = [...accountMenu.querySelectorAll('a, button, select')]; const index = items.indexOf(document.activeElement); items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+    });
+  }
+
+  document.querySelectorAll('[data-confirm]').forEach(control => control.addEventListener('click', event => {
+    if (!window.confirm(control.dataset.confirm)) event.preventDefault();
+  }));
+  document.querySelectorAll('[data-print]').forEach(control => control.addEventListener('click', () => window.print()));
+
+  document.querySelectorAll('[data-recaptcha-form]').forEach(form => form.addEventListener('submit', event => {
+    if (form.dataset.recaptchaSubmitted === '1') return;
+    event.preventDefault(); const button = form.querySelector('button[type="submit"], button:not([type])'); if (button) button.disabled = true;
+    if (!window.grecaptcha) { if (button) button.disabled = false; return; }
+    grecaptcha.ready(() => grecaptcha.execute(form.dataset.recaptchaSiteKey, {action: form.dataset.recaptchaAction}).then(token => { form.querySelector('[data-recaptcha-token]').value = token; form.dataset.recaptchaSubmitted = '1'; form.requestSubmit(); }).catch(() => { if (button) button.disabled = false; }));
+  }));
 
   const packForm = document.querySelector('[data-pack-create]');
   if (packForm) {
@@ -128,6 +161,74 @@
     previous.addEventListener('click', () => { page--; render(); });
     next.addEventListener('click', () => { page++; render(); });
     render();
+  }
+
+  const passkeyButton = document.querySelector('[data-passkey-register]');
+  if (passkeyButton) {
+    const message = document.querySelector('[data-passkey-message]');
+    const labelInput = document.querySelector('[data-passkey-label]');
+    const decode = value => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)), character => character.charCodeAt(0));
+    const encode = value => btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    passkeyButton.addEventListener('click', async () => {
+      if (!window.PublicKeyCredential || !navigator.credentials) { message.textContent = 'This browser does not support passkeys.'; return; }
+      passkeyButton.disabled = true; message.textContent = 'Waiting for your authenticator…';
+      try {
+        const beginBody = new URLSearchParams({_csrf: passkeyButton.dataset.csrf});
+        const beginResponse = await fetch(passkeyButton.dataset.beginUrl, {method: 'POST', body: beginBody, credentials: 'same-origin', headers: {'Accept': 'application/json'}});
+        const request = await jsonResponse(beginResponse); if (!beginResponse.ok) throw new Error(request.error || 'Could not start passkey registration.');
+        const options = request.publicKey; options.challenge = decode(options.challenge); options.user.id = decode(options.user.id); options.excludeCredentials = (options.excludeCredentials || []).map(item => ({...item, id: decode(item.id)}));
+        const credential = await navigator.credentials.create({publicKey: options}); if (!credential) throw new Error('Registration was cancelled.');
+        const response = {id: credential.id, type: credential.type, rawId: encode(credential.rawId), response: {clientDataJSON: encode(credential.response.clientDataJSON), attestationObject: encode(credential.response.attestationObject), transports: credential.response.getTransports ? credential.response.getTransports() : []}, clientExtensionResults: credential.getClientExtensionResults()};
+        const label = (labelInput && labelInput.value.trim()) || 'Passkey';
+        const finishBody = new URLSearchParams({_csrf: passkeyButton.dataset.csrf, challenge_id: request.id, credential: JSON.stringify(response), label});
+        const finishResponse = await fetch(passkeyButton.dataset.finishUrl, {method: 'POST', body: finishBody, credentials: 'same-origin', headers: {'Accept': 'application/json'}}); const result = await jsonResponse(finishResponse); if (!finishResponse.ok || !result.ok) throw new Error(result.error || 'Passkey registration failed.');
+        location.href = result.redirect || location.href;
+      } catch (error) { message.textContent = error.name === 'NotAllowedError' ? 'Passkey registration was cancelled or timed out.' : error.message; passkeyButton.disabled = false; }
+    });
+  }
+
+  const passkeyAuth = document.querySelector('[data-passkey-auth]');
+  if (passkeyAuth) {
+    const message = document.querySelector('[data-passkey-auth-message]'); const decode = value => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)), character => character.charCodeAt(0)); const encode = value => btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    passkeyAuth.addEventListener('click', async () => { passkeyAuth.disabled = true; message.textContent = 'Waiting for your authenticator…'; try { const beginResponse = await fetch(passkeyAuth.dataset.beginUrl, {method:'POST',body:new URLSearchParams({_csrf:passkeyAuth.dataset.csrf}),credentials:'same-origin',headers:{Accept:'application/json'}}); const request=await jsonResponse(beginResponse); if(!beginResponse.ok)throw new Error(request.error||'Could not start passkey authentication.'); const options=request.publicKey;options.challenge=decode(options.challenge);options.allowCredentials=(options.allowCredentials||[]).map(item=>({...item,id:decode(item.id)}));const credential=await navigator.credentials.get({publicKey:options});const response={id:credential.id,type:credential.type,rawId:encode(credential.rawId),response:{clientDataJSON:encode(credential.response.clientDataJSON),authenticatorData:encode(credential.response.authenticatorData),signature:encode(credential.response.signature),userHandle:credential.response.userHandle?encode(credential.response.userHandle):null},clientExtensionResults:credential.getClientExtensionResults()};const finishResponse=await fetch(passkeyAuth.dataset.finishUrl,{method:'POST',body:new URLSearchParams({_csrf:passkeyAuth.dataset.csrf,challenge_id:request.id,credential:JSON.stringify(response)}),credentials:'same-origin',headers:{Accept:'application/json'}});const result=await jsonResponse(finishResponse);if(!finishResponse.ok||!result.ok)throw new Error(result.error||'Passkey authentication failed.');location.href=result.redirect;}catch(error){message.textContent=error.name==='NotAllowedError'?'Passkey authentication was cancelled or timed out.':error.message;passkeyAuth.disabled=false;} });
+  }
+
+  const tour = i18n.tour;
+  if (tour) {
+    const target = document.querySelector(tour.selector);
+    const labels = tour.labels || {};
+    const backdrop = document.createElement('div'); backdrop.className = 'tour-backdrop'; backdrop.setAttribute('aria-hidden', 'true');
+    const panel = document.createElement('section'); panel.className = 'tour-panel'; panel.tabIndex = -1; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'false'); panel.setAttribute('aria-labelledby', 'tour-title'); panel.setAttribute('aria-describedby', 'tour-description');
+    const progress = document.createElement('span'); progress.className = 'tour-progress'; progress.textContent = (labels.step || 'Step {current} of {total}').replace('{current}', String(Number(tour.step) + 1)).replace('{total}', String(tour.total));
+    const title = document.createElement('h2'); title.id = 'tour-title'; title.textContent = tour.title;
+    const description = document.createElement('p'); description.id = 'tour-description'; description.textContent = target ? tour.text : `${tour.text} ${labels.missing || ''}`;
+    const actions = document.createElement('div'); actions.className = 'tour-actions';
+    const skip = document.createElement('button'); skip.type = 'button'; skip.className = 'link'; skip.textContent = labels.skip || 'Skip tutorial';
+    const previous = document.createElement('button'); previous.type = 'button'; previous.className = 'secondary'; previous.textContent = labels.previous || 'Previous'; previous.hidden = Number(tour.step) === 0;
+    const next = document.createElement('button'); next.type = 'button'; next.textContent = tour.last ? (labels.finish || 'Finish') : (labels.next || 'Next');
+    actions.append(skip, previous, next); panel.append(progress, title, description, actions); document.body.append(backdrop, panel);
+
+    const update = async action => {
+      panel.classList.add('is-busy'); panel.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      const response = await fetch(tour.update_url, {method: 'POST', credentials: 'same-origin', headers: {'Accept': 'application/json'}, body: new URLSearchParams({_csrf: tour.csrf, step: tour.step, action, json: '1'})});
+      if (!response.ok) throw new Error(`Tutorial update failed (${response.status})`);
+    };
+    const move = async (action, url) => { try { await update(action); location.href = url; } catch (error) { description.textContent = error.message; panel.classList.remove('is-busy'); panel.querySelectorAll('button').forEach(button => { button.disabled = false; }); } };
+    skip.addEventListener('click', () => move('skip', tour.return_url));
+    previous.addEventListener('click', () => move('previous', tour.previous_url));
+    next.addEventListener('click', () => move(tour.last ? 'complete' : 'next', tour.last ? tour.return_url : tour.next_url));
+
+    if (target) {
+      target.classList.add('tour-target'); target.scrollIntoView({behavior: 'smooth', block: 'center'});
+      if (!target.hasAttribute('tabindex') && !target.matches('a,button,input,select,textarea,summary')) target.tabIndex = 0;
+      if (tour.interactive && target.matches('a')) target.addEventListener('click', event => { event.preventDefault(); move(tour.last ? 'complete' : 'next', tour.next_url); });
+    }
+    panel.focus({preventScroll: true});
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); skip.focus(); }
+      if (event.key === 'ArrowRight' && !event.altKey && !event.ctrlKey && !event.metaKey) next.focus();
+      if (event.key === 'ArrowLeft' && !previous.hidden && !event.altKey && !event.ctrlKey && !event.metaKey) previous.focus();
+    });
   }
 
   const job = window.ModrightJob;

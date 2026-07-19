@@ -1,0 +1,64 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Modright\Tests;
+
+use Modright\AuthThrottle;
+use Modright\Database;
+use Modright\EmailVerificationService;
+use Modright\MailService;
+use Modright\PasswordRecoveryService;
+use Modright\SessionService;
+use Modright\SystemSettings;
+use Modright\UserService;
+use PDO;
+use PHPUnit\Framework\TestCase;
+
+final class IdentityFoundationTest extends TestCase
+{
+    private function database(): PDO
+    { $db=new PDO('sqlite::memory:');$db->setAttribute(PDO::ATTR_ERRMODE,PDO::ERRMODE_EXCEPTION);$db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE,PDO::FETCH_ASSOC);$db->exec('PRAGMA foreign_keys=ON');Database::migrate($db);return$db; }
+
+    public function testNewAccountsRequireEmailAtServiceBoundary():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$this->expectException(\InvalidArgumentException::class);(new UserService($this->database()))->create('noemail','No Email','long-enough-password','user','en_US');}
+
+    public function testEmailIsNormalizedUniqueAndLoginIsTracked(): void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('emailone','One','long-enough-password','user','en_US',' Person@Example.COM ');self::assertSame('person@example.com',$users->find($id)['email']);self::assertNotNull($users->authenticate('emailone','long-enough-password')['last_login_at']);$this->expectException(\InvalidArgumentException::class);$users->create('emailtwo','Two','long-enough-password','user','en_US','person@example.com'); }
+
+    public function testPersistentThrottleCountsSubjectOrIp(): void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$throttle=new AuthThrottle($this->database(),'test-key');for($i=0;$i<3;$i++)$throttle->record('login','person','192.0.2.1',false);self::assertFalse($throttle->check('login','person','192.0.2.9',3)['allowed']);self::assertFalse($throttle->check('login','someone','192.0.2.1',3)['allowed']); }
+
+    public function testInstallationWideThrottleStopsDistributedAbuse():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$throttle=new AuthThrottle($this->database(),'test-key');for($i=0;$i<60;$i++)$throttle->record('login','person-'.$i,'192.0.2.'.($i%50),false);$state=$throttle->check('login','new-person','198.51.100.8',3);self::assertFalse($state['allowed']);self::assertGreaterThan(0,$state['retry_after']);}
+
+    public function testSessionsCanBeVerifiedAndRevoked(): void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('sessionuser','Session','long-enough-password','user','en_US','sessionuser@example.test');$sessions=new SessionService($db,'key');$created=$sessions->create($id,'Firefox','192.0.2.4',['password']);self::assertSame($id,$sessions->verify($created['token'])['user_id']);self::assertCount(1,$sessions->forUser($id));$sessions->revoke($created['id'],$id);self::assertNull($sessions->verify($created['token'])); }
+
+    public function testSessionMetadataUsesCoarseNetworkAndApproximateDeviceLabel():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('private-session','Private Session','long-enough-password','user','en_US','private-session@example.test');$sessions=new SessionService($db,'session-privacy-key');$agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36 exact-fingerprint';$one=$sessions->create($id,$agent,'192.0.2.11',['password']);$two=$sessions->create($id,$agent,'192.0.2.240',['password']);$rows=$db->query('SELECT label,ip_hash FROM user_sessions ORDER BY created_at,id')->fetchAll();self::assertSame('Chrome 126 on Windows',$rows[0]['label']);self::assertStringNotContainsString('fingerprint',$rows[0]['label']);self::assertSame($rows[0]['ip_hash'],$rows[1]['ip_hash']);self::assertStringNotContainsString('192.0.2',(string)$rows[0]['ip_hash']);self::assertNotSame($one['token'],$two['token']);}
+
+    public function testIdleSessionExpiryAndStricterAdministratorAbsoluteLifetime():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$admin=$users->create('sessionadmin','Admin','long-enough-password','admin','en_US','sessionadmin@example.test');$settings=new SystemSettings($db);$settings->setGroup('security',['session_idle_minutes'=>720,'session_absolute_hours'=>168]);$sessions=new SessionService($db,'key',$settings);$created=$sessions->create($admin,'Browser','192.0.2.1',['password']);$stmt=$db->prepare('SELECT expires_at FROM user_sessions WHERE id=?');$stmt->execute([$created['id']]);self::assertLessThanOrEqual(time()+24*3600+2,strtotime((string)$stmt->fetchColumn()));$db->prepare('UPDATE user_sessions SET last_seen_at=? WHERE id=?')->execute([gmdate('c',time()-121*60),$created['id']]);self::assertNull($sessions->verify($created['token']));}
+
+    public function testOneTimePasswordRecoverySendsHttpsLinkAndRevokesSessions(): void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('recover','Recover','old-password-long','user','en_US','recover@example.com');$users->setEmail($id,'recover@example.com',true);$settings=new SystemSettings($db);$settings->setGroup('security',['canonical_url'=>'https://packs.example.test']);$captured=[];$mail=new MailService(['from_address'=>'noreply@example.com'],function($message)use(&$captured){$captured=$message;});$sessions=new SessionService($db,'session-key');$active=$sessions->create($id,'Browser','192.0.2.5',['password']);$service=new PasswordRecoveryService($db,$users,new AuthThrottle($db,'throttle-key'),$mail,$sessions,$settings);$service->request('recover@example.com','192.0.2.5');self::assertStringContainsString('https://packs.example.test/index.php?route=password/reset&token=',$captured['text']);preg_match('/token=([a-f0-9]+)/',$captured['text'],$match);self::assertTrue($service->reset($match[1],'new-password-long','192.0.2.5'));self::assertNotNull($users->authenticate('recover','new-password-long'));self::assertNull($sessions->verify($active['token']));self::assertFalse($service->reset($match[1],'another-password-long','192.0.2.5')); }
+
+    public function testEmailVerificationIsBoundToCurrentAddressAndSingleUse(): void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('verifyuser','Verify','long-enough-password','user','en_US','verify@example.com');$settings=new SystemSettings($db);$settings->setGroup('security',['canonical_url'=>'https://packs.example.test']);$captured=[];$mail=new MailService(['from_address'=>'noreply@example.com'],function($message)use(&$captured){$captured=$message;});$service=new EmailVerificationService($db,$users,$mail,$settings);$service->send($id);preg_match('/token=([a-f0-9]+)/',$captured['text'],$match);self::assertTrue($service->verify($match[1]));self::assertNotNull($users->find($id)['email_verified_at']);self::assertFalse($service->verify($match[1]));$service->send($id);preg_match('/token=([a-f0-9]+)/',$captured['text'],$old);$users->setEmail($id,'changed@example.com');self::assertFalse($service->verify($old[1])); }
+
+    public function testExpiredPasswordResetTokenCannotBeUsed():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('expiredreset','Expired','old-password-long','user','en_US','expired@example.test');$users->setEmail($id,'expired@example.test',true);$settings=new SystemSettings($db);$settings->setGroup('security',['canonical_url'=>'https://packs.example.test']);$captured=[];$mail=new MailService(['from_address'=>'noreply@example.test'],function(array$message)use(&$captured):void{$captured=$message;});$service=new PasswordRecoveryService($db,$users,new AuthThrottle($db,'throttle-key'),$mail,new SessionService($db,'session-key'),$settings);$service->request('expired@example.test','192.0.2.20');preg_match('/token=([a-f0-9]+)/',$captured['text'],$match);$db->exec("UPDATE password_reset_tokens SET expires_at='2000-01-01T00:00:00+00:00'");self::assertFalse($service->reset($match[1],'new-password-long','192.0.2.20'));self::assertNotNull($users->authenticate('expiredreset','old-password-long'));}
+
+    public function testPasswordResetLifetimeIsConfigurableAndDefaultsRemainPreserved():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('expiry-policy','Expiry Policy','old-password-long','user','en_US','expiry-policy@example.test');$users->setEmail($id,'expiry-policy@example.test',true);$settings=new SystemSettings($db);$settings->setGroup('security',['canonical_url'=>'https://packs.example.test','password_reset_minutes'=>75]);$settings->setGroup('security',['session_idle_minutes'=>60]);self::assertSame(75,$settings->group('security')['password_reset_minutes']);$captured=[];$mail=new MailService(['from_address'=>'noreply@example.test'],function(array$message)use(&$captured):void{$captured=$message;});$before=time();(new PasswordRecoveryService($db,$users,new AuthThrottle($db,'throttle-key'),$mail,new SessionService($db,'session-key'),$settings))->request('expiry-policy@example.test','192.0.2.60');$expires=strtotime((string)$db->query('SELECT expires_at FROM password_reset_tokens')->fetchColumn());self::assertGreaterThanOrEqual($before+75*60,$expires);self::assertLessThanOrEqual(time()+75*60+2,$expires);self::assertStringContainsString('expires in 75 minutes',$captured['text']);}
+
+    public function testUnknownAndKnownRecoveryRequestsHaveComparableNormalTiming():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('timing','Timing','old-password-long','user','en_US','timing@example.test');$users->setEmail($id,'timing@example.test',true);$settings=new SystemSettings($db);$settings->setGroup('security',['canonical_url'=>'https://packs.example.test']);$mail=new MailService(['from_address'=>'noreply@example.test'],static function(array$message):void{});$service=new PasswordRecoveryService($db,$users,new AuthThrottle($db,'throttle-key'),$mail,new SessionService($db,'session-key'),$settings);$started=microtime(true);$service->request('missing@example.test','192.0.2.31');$missing=microtime(true)-$started;$started=microtime(true);$service->request('timing@example.test','192.0.2.32');$known=microtime(true)-$started;self::assertGreaterThanOrEqual(.24,$missing);self::assertGreaterThanOrEqual(.24,$known);self::assertLessThan(.08,abs($missing-$known));}
+
+    public function testUnverifiedEmailCannotAuthorizePasswordRecovery():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('unverified','Unverified','old-password-long','user','en_US','unverified@example.test');$settings=new SystemSettings($db);$settings->setGroup('security',['canonical_url'=>'https://packs.example.test']);$sent=false;$mail=new MailService(['from_address'=>'noreply@example.test'],static function()use(&$sent):void{$sent=true;});$service=new PasswordRecoveryService($db,$users,new AuthThrottle($db,'throttle-key'),$mail,new SessionService($db,'session-key'),$settings);$service->request('unverified@example.test','192.0.2.50');self::assertFalse($sent);self::assertSame(0,(int)$db->query('SELECT COUNT(*) FROM password_reset_tokens')->fetchColumn());$this->expectException(\RuntimeException::class);$service->requestForUser($id,'192.0.2.50');}
+
+    public function testPasswordAndEmailChangesExplicitlyRevokeStoredSessions():void
+    { if(!in_array('sqlite',PDO::getAvailableDrivers(),true))self::markTestSkipped();$db=$this->database();$users=new UserService($db);$id=$users->create('mutationuser','Mutation','old-password-long','user','en_US','mutation@example.test');$sessions=new SessionService($db,'session-key');$passwordSession=$sessions->create($id,'First','192.0.2.40',['password']);$users->setPassword($id,'new-password-long');self::assertNull($sessions->verify($passwordSession['token']));$emailSession=$sessions->create($id,'Second','192.0.2.41',['password']);$users->setEmail($id,'changed@example.test');self::assertNull($sessions->verify($emailSession['token']));self::assertSame(0,(int)$db->query('SELECT COUNT(*) FROM user_sessions WHERE revoked_at IS NULL')->fetchColumn());}
+}

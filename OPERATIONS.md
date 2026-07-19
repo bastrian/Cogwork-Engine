@@ -6,6 +6,170 @@ Cogwork Engine requires PHP 8.3 with cURL, JSON, mbstring, OpenSSL, PDO, and ZIP
 
 For upgrades, replace application files but preserve the entire `storage/` directory. Database migrations are additive and run automatically on the next request. Create a Cogwork Engine backup before upgrading and test the upgrade on a copy when possible.
 
+### HTTPS and reverse proxies
+
+Account recovery, email verification, TOTP/recovery-code management, passkeys,
+and reCAPTCHA are deliberately unavailable unless both the configured canonical
+URL and the effective request are HTTPS. Direct TLS is detected automatically.
+When TLS terminates at a reverse proxy, add only that proxy's exact IP address or
+CIDR network under **Administration → System → Security and public URL**. Cogwork
+Engine ignores `X-Forwarded-Proto` from every other client. A wrong trusted-proxy
+entry can make secure cookies unavailable; remove it from the database or use a
+host-level database backup if the UI is unreachable.
+
+The bundled Caddy profile forwards HTTPS to the loopback-bound application. For
+another proxy, preserve the original host and send `X-Forwarded-Proto: https`.
+Never expose the application port publicly as a way around TLS.
+
+### Manual upgrade and rollback
+
+1. In **Administration → System**, check for updates and download the redacted
+   upgrade-readiness report.
+2. Finish or cancel active jobs, pause cron, and download a fresh Cogwork Engine
+   backup. Also take a database/filesystem backup; the logical export excludes
+   accounts and credentials.
+3. Download the shared-hosting ZIP and `.zip.sha256` from the linked GitHub
+   release. Verify SHA-256 locally before extracting. Cogwork Engine never
+   downloads, executes, or installs application updates itself.
+4. Preserve `storage/` and protected configuration, replace application files,
+   then load the System page once. Migrations are idempotent and additive.
+5. Run diagnostics, a catalog refresh, validation, and a dry-run build.
+
+For rollback, stop cron, restore the prior application files and the matching
+database/filesystem backup together, then run diagnostics. Do not restore old
+files over a database changed by a future irreversible migration. Current
+Phase 11–13 migrations only add tables, columns, and indexes and are rollback
+safe when the previous application ignores them.
+
+Before release, complete the physical Safari and Windows Hello checks in
+[`MANUAL_VERIFICATION.md`](MANUAL_VERIFICATION.md). Linux browser automation
+uses a virtual WebAuthn authenticator and cannot substitute for platform
+Windows Hello or Safari behavior.
+
+### Update-check privacy
+
+When enabled, the server requests only the public
+`bastrian/Cogwork-Engine` GitHub Releases API with a Cogwork Engine user agent.
+No GitHub token, account identifier, pack metadata, or user data is sent. ETag
+and Last-Modified validators and the last valid result are cached. The Stable
+channel ignores prereleases; Include prereleases evaluates both. Failures leave
+the last valid result visible as stale. Release notes are rendered as plain text,
+and only trusted GitHub links and expected ZIP/checksum assets are shown.
+Loading Administration never initiates a GitHub request. Automatic checks run
+only from an authenticated cron invocation after the configured interval; the
+administrator-only **Check now** action is separately rate-limited.
+
+### Modrinth connectivity and proxies
+
+The Modrinth master feature switch stops live API, status, catalog, icon, import,
+update, migration-scan, and download work. Existing packs, local files, cached
+metadata, validation, backups, and builds remain available where their required
+files are already present. Disabling connectivity does not weaken HTTPS host
+allowlists, redirect limits, download-size limits, or hash verification.
+
+The Modrinth proxy and general GitHub proxy are configured independently.
+Supported proxy types are HTTP, HTTPS, and SOCKS5, with bounded connection
+timeouts and protected optional credentials. The Modrinth proxy-bypass list can
+contain only exact destinations already compiled into Cogwork Engine's outbound
+allowlist; arbitrary hosts, suffix patterns, URLs, and IP ranges are rejected.
+Use **Test Modrinth connection and proxy** after every change. Diagnostics report
+only the failure stage and never return credentials or private proxy responses.
+
+### Mail, recovery, and strong authentication
+
+Prefer authenticated SMTP with STARTTLS/TLS and a short timeout. SMTP, proxy,
+and reCAPTCHA secrets live in protected configuration and are excluded from
+logical backups, configuration exports, diagnostics, and audit records. PHP
+`mail()` is an explicit fallback, not an implicit guarantee of delivery.
+New or changed account addresses remain unverified until the single-use HTTPS
+verification link is used. Unverified addresses cannot authorize password
+recovery or email compatibility codes.
+
+TOTP secrets are encrypted at rest. Recovery codes and reset/session/email codes
+are stored only as hashes and shown only when appropriate. Print recovery codes
+and keep them outside the server. Passkeys require the exact canonical HTTPS
+origin. Windows Hello and FIDO2 availability depends on the browser and device.
+If all factors are lost, an administrator must follow the audited account
+recovery process; never transmit a password or factor secret by email.
+Network identifiers used for abuse prevention and reset-request correlation are
+coarsened and keyed per installation; raw client addresses are not retained in
+these authentication records.
+
+Recovery order:
+
+1. Use a saved, single-use recovery code when a TOTP device, Windows Hello,
+   roaming security key, or phone passkey is unavailable.
+2. Use **Forgot password** only for password loss when the account address is
+   verified and outbound mail works. Password recovery never bypasses a required
+   second factor.
+3. Ask another administrator to send an account reset link or use the strongly
+   confirmed **Reset all authentication factors** action. Factor reset revokes
+   every account session and is prominently audited.
+4. Repair SMTP/PHP `mail()` or verify the address through normal account
+   controls when email is inaccessible; do not substitute an emailed password.
+5. For the final administrator with no usable factor, use protected host and
+   database recovery or restore a tested server backup. Never copy factor
+   secrets, reset/session tokens, or reusable credentials into a recovery file.
+
+Emergency controls: set `COGWORK_MAINTENANCE_DISABLE=1` temporarily, or edit the
+protected `storage/config.php` return value and add
+`'emergency' => ['disable_maintenance' => true]`, to bypass a bad maintenance
+configuration. Correct the database-backed setting, then remove the environment
+variable or the entire `emergency` entry and retest. Do not leave the override
+enabled: it suppresses maintenance enforcement for every visitor. Host-level
+database/configuration recovery is required if the final administrator loses
+every factor.
+
+### Maintenance, retention, and diagnostics
+
+Feature controls are grouped and searchable under **Administration → System →
+Features**. Changes take effect immediately and require no process restart.
+Dependencies are validated atomically before saving, and every changed flag
+requires a reason and creates an audit entry containing its previous and new
+state. Core authentication, administrator recovery, migrations, security
+logging, and the feature-control screen are not optional flags.
+
+Disabling Modrinth connectivity is refused while a dependent job is queued or
+running; finish or cancel those jobs first. Once disabled, no new dependent job
+can be created and no existing dependent step advances. Local packs, cached
+metadata, local JARs, validation, backups, and builds whose required files are
+already synchronized remain usable. Re-enabling the feature resumes eligible
+queued work. Feature states are included in redacted diagnostics and
+non-secret configuration exports.
+
+Maintenance mode returns HTTP 503 to ordinary users and can publish a scheduled
+English/German message and `Retry-After`. Enabled administrators retain access.
+The processing policy independently controls new-job creation, subsequent
+bounded steps of queued/running browser jobs, cron, outbound mail, and the
+public status endpoint. A step already executing is allowed to finish; Cogwork
+Engine does not terminate a PHP request midway through file or database work.
+
+Retention cleanup is manual and bounded. It removes only eligible completed
+jobs, archived notifications, old security/abuse records, and expired auth
+artifacts. It never removes Minecraft worlds or external server data. Review the
+dry-run counts and keep independent package, application, database, and world
+retention policies.
+
+Downloaded diagnostics and upgrade reports intentionally exclude credentials,
+tokens, DSNs, private paths, personal data, and remote response bodies. Review a
+report before attaching it to a support request.
+
+Scheduled announcements are reconciled when application pages are served.
+Their first activation and expiry transition are each recorded once in the
+audit history, in addition to creation, editing, audience changes, archival,
+and deletion. English title and message are required and are the fallback when
+a German field is empty. Content is rendered as escaped plain text with safe
+line breaks; links are restricted to local application paths or credential-free
+absolute HTTPS URLs. Critical and maintenance notices cannot be dismissed.
+
+Configuration exports are portable behavior profiles, not complete deployment
+backups. They omit canonical URLs, trusted proxies, logout targets, mail-server
+identity, proxy endpoints and bypass entries, CAPTCHA site identity, all
+credentials, personal data, and private paths. Merge changes only provided
+portable values. Replace resets other portable values to defaults but preserves
+the destination installation's local-only settings. Every import is previewed,
+explicitly confirmed, backed up internally, and audited.
+
 ### Locale maintenance
 
 English and German translations are stored in `lang/en_US.php` and
@@ -21,6 +185,14 @@ Docker test deployment:
 MODRIGHT_BIND=127.0.0.1 MODRIGHT_PORT=8080 docker compose up -d web
 docker compose --profile test run --rm test
 ```
+
+Run browser tests with `docker compose --profile e2e run --rm e2e-chromium`
+and `docker compose --profile e2e run --rm e2e-firefox`. Each runner clears
+only its own explicitly mounted E2E volume before the run. Never use `docker
+compose down --volumes` on an installed instance:
+Compose also selects services without a profile, and that command deletes the
+production `modright_data` volume. Stop or remove named test services directly
+when troubleshooting them.
 
 Optional Caddy HTTPS proxy:
 
@@ -62,10 +234,15 @@ configured SQLite database or a MySQL dump for complete account recovery.
 ## Tutorial and help maintenance
 
 Tutorial state is stored per user as not started, in progress, skipped, or
-completed with a current step. Users can restart it from Help. Help content is
-local and usable without Modrinth. Keep English and German topic text aligned,
-verify internal anchors, and update the displayed documentation version when
-workflows change materially.
+completed with a current step. The first-login tour runs on the real application
+pages: each step identifies and highlights its target while leaving the control
+usable. Interactive links advance to the next page; Previous, Next, Skip, and
+Finish persist progress through the normal CSRF-protected endpoint. Missing or
+unauthorized targets fall back to a usable explanatory dialog. Users can restart
+the tour from Help. Help content is local and usable without Modrinth. Keep the
+step routes, CSS selectors, English and German text aligned with interface
+changes, verify internal anchors, and update the displayed documentation version
+when workflows change materially.
 
 ## Build profiles
 
@@ -97,7 +274,7 @@ Cogwork Engine writes `eula=false` unless the administrator explicitly records a
 
 ## Backup and recovery
 
-Settings → Backup and migration exports:
+Administration → System → Data & backups exports:
 
 - pack indexes and synchronized files;
 - common, client, and server overrides;
@@ -106,6 +283,15 @@ Settings → Backup and migration exports:
 - cached Modrinth metadata and icons.
 
 It excludes administrator accounts and password hashes, application keys, cron tokens, sessions, transient jobs, audit logs, and database credentials.
+
+The separate non-secret configuration export carries portable feature,
+notification-default, maintenance, retention, and update policies. Account email
+state, abuse counters, security events, reset/verification records, sessions,
+TOTP material, recovery-code hashes, passkeys, and CAPTCHA/proxy/SMTP secrets are
+intentionally excluded from both portable exports. Preserve and restore those
+installation-local records only as part of a protected, matching database and
+filesystem disaster-recovery backup; never merge authentication tables between
+installations.
 
 Restore validates the ZIP structure, entry count, expanded size, metadata format, pack indexes, and paths before importing records. By default it refuses internal pack-ID collisions. Enable overwrite only when intentionally restoring the same installation. Keep an independent filesystem/database backup before an overwrite restore.
 

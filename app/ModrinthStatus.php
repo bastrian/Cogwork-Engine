@@ -8,10 +8,12 @@ final class ModrinthStatus
 {
     private const URL = 'https://status.modrinth.com/';
     private const CACHE_SECONDS = 90;
+    public function __construct(private readonly ?SystemSettings$settings=null,private readonly ?SecretStore$secrets=null){}
 
     /** @return array{state:string,label:string,checked_at:string} */
     public function current(): array
     {
+        if($this->settings!==null&&!$this->settings->feature('modrinth'))return['state'=>'unknown','label'=>'Modrinth disabled','checked_at'=>Database::now()];
         $cachePath = MODRIGHT_ROOT . '/storage/status-cache.json';
         $cached = $this->readCache($cachePath);
         if ($cached !== null && time() - strtotime($cached['checked_at']) < self::CACHE_SECONDS) {
@@ -19,23 +21,11 @@ final class ModrinthStatus
         }
 
         try {
-            $ch = curl_init(self::URL);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 2,
-                CURLOPT_TIMEOUT => 4,
-                CURLOPT_FOLLOWLOCATION => false,
-                CURLOPT_FAILONERROR => true,
-                CURLOPT_MAXFILESIZE => 2 * 1024 * 1024,
-                CURLOPT_USERAGENT => 'Cogwork-Engine/1.0 status indicator',
-                CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
-            ]);
-            $html = curl_exec($ch);
-            $error = curl_error($ch);
-            curl_close($ch);
-            if (!is_string($html) || $html === '') throw new \RuntimeException($error ?: 'Empty status response.');
+            $html=(new ModrinthClient($this->settings,$this->secrets??new SecretStore()))->statusPage();
+            if ($html === '') throw new \RuntimeException('Empty status response.');
             $status = self::classify($html);
         } catch (\Throwable) {
+            if($cached!==null)return$cached+['source'=>'stale-cache'];
             $status = ['state' => 'unknown', 'label' => 'Status unknown'];
         }
 

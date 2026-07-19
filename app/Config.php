@@ -26,6 +26,27 @@ final class Config
         return $config;
     }
 
+    /**
+     * Host-level maintenance escape hatch. This deliberately lives in the
+     * protected installation configuration, outside database-backed settings,
+     * so an administrator can recover when the UI is unreachable.
+     */
+    /** @param array<string,mixed>|null $config */
+    public static function maintenanceDisabledByHost(?array $config = null): bool
+    {
+        if (getenv('COGWORK_MAINTENANCE_DISABLE') === '1') {
+            return true;
+        }
+        if ($config === null) {
+            try {
+                $config = self::load();
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+        return ($config['emergency']['disable_maintenance'] ?? false) === true;
+    }
+
     /** @param array<string, mixed> $config */
     public static function write(array $config): void
     {

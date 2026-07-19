@@ -22,11 +22,20 @@ trap 'rm -rf "$staging"' EXIT
 mkdir -p "$staging/$package/config" "$staging/$package/storage"
 
 cp "$root/.htaccess" "$root/index.php" "$root/CHANGELOG.md" "$root/LICENSE" \
-  "$root/README.md" "$root/SECURITY.md" "$root/VERSION" "$staging/$package/"
+  "$root/OPERATIONS.md" "$root/README.md" "$root/SECURITY.md" "$root/VERSION" "$staging/$package/"
 cp -R "$root/app" "$root/assets" "$root/lang" "$staging/$package/"
+if [[ -d "$root/vendor" ]]; then
+  cp -R "$root/vendor" "$staging/$package/"
+fi
 cp "$root/config/.htaccess" "$staging/$package/config/.htaccess"
 cp "$root/storage/.htaccess" "$root/storage/.gitignore" \
   "$staging/$package/storage/"
+
+(
+  cd "$staging/$package"
+  find app assets lang -type f -print0 | sort -z | xargs -0 sha256sum > .release-manifest.sha256
+  sha256sum .htaccess index.php VERSION >> .release-manifest.sha256
+)
 
 rm -f "$archive" "$checksum"
 (
