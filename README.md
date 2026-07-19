@@ -8,6 +8,9 @@ restricted shared hosting and processes long-running work in short, resumable
 HTTP steps—no daemon, shell access, Node.js, or production Composer install is
 required.
 
+**[Download a release](https://github.com/bastrian/Cogwork-Engine/releases)** ·
+**[Read the documentation](https://github.com/bastrian/Cogwork-Engine/wiki)**
+
 ## Highlights
 
 - Create or import `.mrpack` projects and synchronize verified mod files.
