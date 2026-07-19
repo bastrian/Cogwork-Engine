@@ -101,6 +101,7 @@ services:
     working_dir: /work
     environment:
       COGWORK_E2E_URL: http://e2e-web
+      COGWORK_E2E_STORAGE: /e2e-storage
     volumes:
       - .:/work
       - e2e_node_modules:/work/node_modules
@@ -118,6 +119,7 @@ services:
     working_dir: /work
     environment:
       COGWORK_E2E_URL: http://e2e-web-firefox
+      COGWORK_E2E_STORAGE: /e2e-storage
     volumes:
       - .:/work
       - e2e_node_modules:/work/node_modules
@@ -135,6 +137,7 @@ services:
     working_dir: /work
     environment:
       COGWORK_E2E_URL: http://e2e-web
+      COGWORK_E2E_STORAGE: /e2e-storage
     volumes:
       - .:/work
       - e2e_node_modules:/work/node_modules

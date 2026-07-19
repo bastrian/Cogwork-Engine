@@ -1,5 +1,9 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
+const path = require('path');
+
+const projectRoot = process.env.COGWORK_E2E_ROOT || process.cwd();
+const storageRoot = process.env.COGWORK_E2E_STORAGE || path.join(projectRoot, 'storage');
 
 test('install, sign in, navigate account/admin/help, and sign out', async ({ page }) => {
   test.setTimeout(60000);
@@ -38,8 +42,8 @@ test('install, sign in, navigate account/admin/help, and sign out', async ({ pag
   await expect(page.getByRole('heading', { name: 'Modpacks' })).toBeVisible();
 
   // Keep browser tests deterministic and independent from live catalog services.
-  fs.writeFileSync('/e2e-storage/catalog-minecraft.json', JSON.stringify(['1.20.1']));
-  fs.writeFileSync('/e2e-storage/catalog-loader-v3-fabric-1.20.1.json', JSON.stringify(['0.15.11']));
+  fs.writeFileSync(path.join(storageRoot, 'catalog-minecraft.json'), JSON.stringify(['1.20.1']));
+  fs.writeFileSync(path.join(storageRoot, 'catalog-loader-v3-fabric-1.20.1.json'), JSON.stringify(['0.15.11']));
   await page.getByRole('link', { name: 'New pack' }).click();
   await page.getByLabel('Name').fill('Browser Test Pack');
   await page.getByLabel('Minecraft version').selectOption('1.20.1');
@@ -79,7 +83,7 @@ test('install, sign in, navigate account/admin/help, and sign out', async ({ pag
   expect(await page.locator('.admin-pack-table').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
   await page.getByRole('link', { name: 'System', exact: true }).click();
   await expect(page.getByText(/Overall status:/)).toBeVisible();
-  await expect(page.getByText(`Cogwork Engine ${fs.readFileSync('/work/VERSION', 'utf8').trim()}`)).toBeVisible();
+  await expect(page.getByText(`Cogwork Engine ${fs.readFileSync(path.join(projectRoot, 'VERSION'), 'utf8').trim()}`)).toBeVisible();
   await expect(page.locator('.system-health')).toBeVisible();
   await expect(page.locator('.system-settings')).toBeHidden();
   await expect(page.locator('.system-nav-card')).toHaveCount(7);
@@ -170,7 +174,7 @@ test('install, sign in, navigate account/admin/help, and sign out', async ({ pag
 
   await page.getByRole('link', { name: 'Help' }).click();
   await expect(page.getByRole('heading', { name: 'Help center' })).toBeVisible();
-  await expect(page.getByText(`Documentation for Cogwork Engine ${fs.readFileSync('/work/VERSION', 'utf8').trim()}`)).toBeVisible();
+  await expect(page.getByText(`Documentation for Cogwork Engine ${fs.readFileSync(path.join(projectRoot, 'VERSION'), 'utf8').trim()}`)).toBeVisible();
   await page.locator('[data-account-menu] summary').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
