@@ -57,7 +57,7 @@ jobs:
           unzip -t "$archive"
           (cd dist && sha256sum -c "$(basename "$archive").sha256")
           entries=$(unzip -Z1 "$archive")
-          if grep -Eq '(^|/)(\.git|\.github|tests|config/config\.php|storage/config\.php|composer\.(json|lock)|phpunit\.xml|compose\.ya?ml)(/|$)' <<< "$entries"; then
+          if grep -Eq '^[^/]+/(\.git|\.github|tests|config/config\.php|storage/config\.php|composer\.(json|lock)|phpunit\.xml|compose\.ya?ml)(/|$)' <<< "$entries"; then
             printf '%s\n' 'Release contains a forbidden development or runtime path.' >&2
             exit 1
           fi

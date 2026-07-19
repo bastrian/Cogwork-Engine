@@ -1,4 +1,0 @@
-https://e2e-secure-proxy {
-	tls internal
-	reverse_proxy e2e-secure-web:80
-}

@@ -22,7 +22,7 @@ trap 'rm -rf "$staging"' EXIT
 mkdir -p "$staging/$package/config" "$staging/$package/storage"
 
 cp "$root/.htaccess" "$root/index.php" "$root/CHANGELOG.md" "$root/LICENSE" \
-  "$root/OPERATIONS.md" "$root/README.md" "$root/SECURITY.md" "$root/VERSION" "$staging/$package/"
+  "$root/README.md" "$root/SECURITY.md" "$root/VERSION" "$staging/$package/"
 cp -R "$root/app" "$root/assets" "$root/lang" "$staging/$package/"
 if [[ -d "$root/vendor" ]]; then
   cp -R "$root/vendor" "$staging/$package/"

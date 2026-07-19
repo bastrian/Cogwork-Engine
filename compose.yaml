@@ -26,40 +26,12 @@ services:
         WORKDIR /var/www/html
     ports:
       - "${MODRIGHT_BIND:-127.0.0.1}:${MODRIGHT_PORT:-8080}:80"
-    environment:
-      # The bundled Caddy service has this fixed address. Trusting only that
-      # address keeps forwarded HTTPS headers from direct port-8095 clients
-      # untrusted. Override this value when using a different reverse proxy.
-      COGWORK_TRUSTED_PROXIES: "${COGWORK_TRUSTED_PROXIES:-172.29.95.3}"
-    networks:
-      cogwork_proxy:
-        ipv4_address: 172.29.95.2
     volumes:
       - .:/var/www/html:ro
       - modright_data:/var/www/html/storage
     command: >-
       sh -c "chown -R www-data:www-data /var/www/html/storage
       && exec apache2-foreground"
-    restart: unless-stopped
-
-  proxy:
-    image: caddy:2-alpine
-    profiles: ["proxy"]
-    depends_on:
-      - web
-    environment:
-      COGWORK_DOMAIN: "${COGWORK_DOMAIN:-localhost}"
-    ports:
-      - "${COGWORK_HTTPS_BIND:-0.0.0.0}:80:80"
-      - "${COGWORK_HTTPS_BIND:-0.0.0.0}:443:443"
-      - "${COGWORK_HTTPS_BIND:-0.0.0.0}:443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      cogwork_proxy:
-        ipv4_address: 172.29.95.3
     restart: unless-stopped
 
   test:
@@ -190,65 +162,10 @@ services:
       sh -c "chown -R www-data:www-data /var/www/html/storage
       && exec apache2-foreground"
 
-  e2e-secure-web:
-    profiles: ["e2e-secure"]
-    build:
-      context: .
-      dockerfile_inline: |
-        FROM php:8.3-apache
-        RUN apt-get update && apt-get install -y --no-install-recommends libcurl4-openssl-dev libonig-dev libsqlite3-dev libzip-dev \
-          && docker-php-ext-install -j$$(nproc) curl mbstring pdo_sqlite zip \
-          && a2enmod rewrite && sed -ri 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf \
-          && rm -rf /var/lib/apt/lists/*
-        WORKDIR /var/www/html
-    volumes:
-      - .:/var/www/html:ro
-      - e2e_secure_data:/var/www/html/storage
-    command: >-
-      sh -c "chown -R www-data:www-data /var/www/html/storage
-      && exec apache2-foreground"
-
-  e2e-secure-proxy:
-    profiles: ["e2e-secure"]
-    image: caddy:2-alpine
-    depends_on:
-      - e2e-secure-web
-    volumes:
-      - ./Caddyfile.e2e:/etc/caddy/Caddyfile:ro
-      - e2e_secure_caddy:/data
-
-  e2e-secure-chromium:
-    profiles: ["e2e-secure"]
-    image: mcr.microsoft.com/playwright:v1.61.1-noble
-    depends_on:
-      - e2e-secure-proxy
-    working_dir: /work
-    environment:
-      COGWORK_E2E_URL: https://e2e-secure-proxy
-    volumes:
-      - .:/work
-      - e2e_node_modules:/work/node_modules
-      - e2e_secure_data:/e2e-storage
-    command: >-
-      sh -c "find /e2e-storage -mindepth 1 -delete
-      && npm ci --no-audit --no-fund
-      && npx playwright test e2e/secure-auth.spec.js --project=chromium"
-
 volumes:
   modright_data:
   composer_vendor:
   test_temp:
-  caddy_data:
-  caddy_config:
   e2e_data:
   e2e_firefox_data:
   e2e_node_modules:
-  e2e_secure_data:
-  e2e_secure_caddy:
-
-networks:
-  cogwork_proxy:
-    name: cogwork_proxy
-    ipam:
-      config:
-        - subnet: 172.29.95.0/24
